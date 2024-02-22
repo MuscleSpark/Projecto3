@@ -111,7 +111,7 @@ def pack_dat(block_number: int, data: bytes) -> bytes:
     if len(data) > MAX_DATA_LEN:
         raise TFTPValueError(f'Data size {block_number} larger than allowed /{MAX_DATA_LEN}')
     fmt = f'!HH{len(data)}s'
-    return struct.pack(fmt, DATA, block_number, data)
+    return struct.pack(fmt, DAT, block_number, data)
 #:
 
 def unpack_dat(packet: bytes) -> tuple[int, bytes]:

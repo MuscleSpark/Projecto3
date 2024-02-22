@@ -12,6 +12,16 @@ Código fonte de acordo com a licença GPL3. Deverá consultar:
 
 import string
 import struct
+from socket import socket, AF_INET, SOCK_DGRAM
+
+###################################
+##
+## PROTOCOL CONSTANTS AND TYPES
+##
+###################################
+
+MAX_DATA_LEN = 512              # bytes
+MAX_BLOCK_NUMBER = 2**16-1      # 0...
 
 # TFTP message opcodes
 RRQ = 1     # Read ReQest
@@ -75,11 +85,11 @@ def _pack_rrq_wrq(opcode: int, filename: str, mode: str = DEFAULT_MODE) -> bytes
     return struct.pack(fmt, RRQ, filename_bytes, mode_bytes)
 #:
 
-def unpack_rrq(packet) -> tuple[str, str]:
+def unpack_rrq(packet: bytes) -> tuple[str, str]:
     return _unpack_rrq_wrq(RRQ, packet)
 #:
 
-def unpack_wrq(packet) -> tuple[str, str]:
+def unpack_wrq(packet: bytes) -> tuple[str, str]:
     return _unpack_rrq_wrq(WRQ, packet)
 #:
 
@@ -92,6 +102,58 @@ def _unpack_rrq_wrq(opcode: int, packet: bytes) -> tuple[str, str]:
     mode = packet[delim_pos+1:-1].decode()
     return filename, mode
 #:
+
+##############################################
+
+def pack_dat(block_number: int, data: bytes) -> bytes:
+    if not 0 <= block_number <= MAX_BLOCK_NUMBER:
+        raise TFTPValueError(f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}')
+    if len(data) > MAX_DATA_LEN:
+        raise TFTPValueError(f'Data size {block_number} larger than allowed /{MAX_DATA_LEN}')
+    fmt = f'!HH{len(data)}s'
+    return struct.pack(fmt, DATA, block_number, data)
+#:
+
+def unpack_dat(packet: bytes) -> tuple[int, bytes]:
+    opcode, block_number = struct.unpack('!HH', packet[:4])
+    if opcode != DAT:
+        raise TFTPValueError(f'Invalid opcode {opcode}. Expecting {DAT=}.')
+    return block_number, packet[4:]
+#:
+
+def pack_ack(block_number: int) -> bytes:
+    if not 0 <= block_number <= MAX_BLOCK_NUMBER:
+        raise TFTPValueError(f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}')
+    return struct.pack(f'!HH', ACK, block_number)
+#:
+
+def pack_ack(packet: bytes) -> int:
+    opcode, block_number = struct.unpack('!HH', packet)
+    if opcode != ACK:
+        raise TFTPValueError(f'Invalid opcode {opcode}. Expecting {ACK=}.')
+    return block_number
+#:
+
+#############################################
+
+def pack_err(error_code: int, error_msg: str | None = None) -> bytes:
+    if error_msg not in ERROR_MESSAGES:
+        raise TFTPValueError(f'Invalid error code {error_code}')
+    if error_msg is None:
+        error_msg = ERROR_MESSAGES[error_code]
+    error_msg_bytes = error_msg.encode() + b'\x00'
+    fmt = f'!HH{len(error_msg_bytes)}s'
+    return struct.pack(fmt, ERR, error_code, error_msg_bytes)
+#:
+
+def unpack_err(opcode: int, packet: bytes) -> tuple[str, str]:
+    opcode, error_code = struct.unpack('!HH', packet[:4])
+    if opcode != ERR:
+        raise TFTPValueError(f'Invalid opcode: {opcode}. Expected opcode: {ERR=}')
+    return error_code, packet[4:-1].decode()
+#:
+
+#############################################
 
 def unpack_opcode(packet: bytes) -> int:
     opcode, *_ = struct.unpack('!H', packet[:2])

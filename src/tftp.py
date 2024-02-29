@@ -15,7 +15,7 @@ import string
 import struct
 import ipaddress
 import re
-from enum import Enum
+from enum import IntEnum
 
 ###################################
 ##
@@ -24,11 +24,12 @@ from enum import Enum
 ###################################
 
 MAX_DATA_LEN = 512              # bytes
-MAX_BLOCK_NUMBER = 2**16-1      # 0...
-INACTIVITY_TIMEOUT = 0.25
-DEFAULT_BUFFER_SIZE = 8192
+MAX_BLOCK_NUMBER = 2**16-1      # 0...65535
+INACTIVITY_TIMEOUT = 25.0       # seconds
+DEFAULT_MODE = 'octet'
+DEFAULT_BUFFER_SIZE = 8192      # bytes
 
-class TFTPOpcode(Enum):
+class TFTPOpcode(IntEnum):
     # TFTP message opcodes
     RRQ = 1     # Read ReQest
     WRQ = 2     # Write Request
@@ -47,8 +48,6 @@ ERROR_MESSAGES = {
     ERR_ACCESS_VIOLATION: 'Access violation.',
     # TODO: Acrescentar códigos de erro em falta
 }
-
-DEFAULT_MODE = 'octet'
 
 INET4Address = tuple[str, int]      # TCP/UDP address => IPv4 and port
 
@@ -114,7 +113,7 @@ def get_file(server_addr: INET4Address, filename: str):
 #:
 
 def put_file(server_addr: INET4Address, filename: str):
-    print(f"Upload file to {server_addr} ")
+    print(f"Upload file {filename} to {server_addr} ")
 #:
 
 ###################################
@@ -122,6 +121,10 @@ def put_file(server_addr: INET4Address, filename: str):
 ##  PACKET PACKING AND UNPACKING
 ##
 ###################################
+
+#####
+# Pack RRQ/WRQ
+#####
 
 def pack_rrq(filename: str, mode: str = DEFAULT_MODE):
     return _pack_rrq_wrq(TFTPOpcode.RRQ, filename, mode)
@@ -134,13 +137,15 @@ def pack_wrq(filename: str, mode: str = DEFAULT_MODE):
 def _pack_rrq_wrq(opcode: int, filename: str, mode: str = DEFAULT_MODE) -> bytes:
     if not is_ascii_printable(filename):
         raise TFTPValueError(f"Invalid filename: {filename}. Not ASCII printable.")
-    
     filename_bytes = filename.encode() + b'\x00'
     mode_bytes = mode.encode() + b'\x00'
     fmt = f'!H{len(filename_bytes)}s{len(mode_bytes)}s'
-
     return struct.pack(fmt, TFTPOpcode.RRQ, filename_bytes, mode_bytes)
 #:
+
+#####
+# Unpack RRQ/WRQ
+#####
 
 def unpack_rrq(packet: bytes) -> tuple[str, str]:
     return _unpack_rrq_wrq(TFTPOpcode.RRQ, packet)
@@ -160,13 +165,17 @@ def _unpack_rrq_wrq(opcode: int, packet: bytes) -> tuple[str, str]:
     return filename, mode
 #:
 
-##############################################
+#####
+# DAT
+#####
 
 def pack_dat(block_number: int, data: bytes) -> bytes:
     if not 0 <= block_number <= MAX_BLOCK_NUMBER:
-        raise TFTPValueError(f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}')
+        err_msg = f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}'
+        raise TFTPValueError(err_msg)
     if len(data) > MAX_DATA_LEN:
-        raise TFTPValueError(f'Data size {block_number} larger than allowed /{MAX_DATA_LEN}')
+        err_msg = f'Data size {block_number} larger than allowed /{MAX_DATA_LEN}'
+        raise TFTPValueError(err_msg)
     fmt = f'!HH{len(data)}s'
     return struct.pack(fmt, TFTPOpcode.DAT, block_number, data)
 #:
@@ -178,20 +187,28 @@ def unpack_dat(packet: bytes) -> tuple[int, bytes]:
     return block_number, packet[4:]
 #:
 
+#####
+# ACK
+#####
+
 def pack_ack(block_number: int) -> bytes:
     if not 0 <= block_number <= MAX_BLOCK_NUMBER:
-        raise TFTPValueError(f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}')
+        err_msg = f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}'
+        raise TFTPValueError(err_msg)
     return struct.pack(f'!HH', TFTPOpcode.ACK, block_number)
 #:
 
-def pack_ack(packet: bytes) -> int:
+def unpack_ack(packet: bytes) -> int:
     opcode, block_number = struct.unpack('!HH', packet)
     if opcode != TFTPOpcode.ACK:
-        raise TFTPValueError(f'Invalid opcode {opcode}. Expecting {TFTPOpcode.ACK=}.')
+        err_msg = f'Invalid opcode {opcode}. Expecting {TFTPOpcode.ACK=}.'
+        raise TFTPValueError(err_msg)
     return block_number
 #:
 
-#############################################
+#####
+# ERR
+#####
 
 def pack_err(error_code: int, error_msg: str | None = None) -> bytes:
     if error_msg not in ERROR_MESSAGES:
@@ -210,7 +227,9 @@ def unpack_err(opcode: int, packet: bytes) -> tuple[str, str]:
     return error_code, packet[4:-1].decode()
 #:
 
-#############################################
+#####
+# OPCODE
+#####
 
 def unpack_opcode(packet: bytes) -> int:
     opcode, *_ = struct.unpack('!H', packet[:2])
@@ -243,19 +262,29 @@ class TFTPValueError(ValueError):
 
 class NetworkError(Exception):
     """
+    Any network error, like "host not found", timeouts, etc.
     """
 #:
 
 class ProtocolError(NetworkError):
     """
+    A protocol error like unexpected of invalid opcode, wrong block number, or any other invalid protocol parameter.
     """
 #:
 
 class Err(Exception):
     """
+    An error sent by the server. It may be caused because a read/write can't be processed. 
+    Read and write errors during file transmission also cause this message to be sent,
+    and transmission is then terminated.
+    The error number gives a numeric error code, 
+    followed by an ASCII error message that might contain additional, 
+    operating system specific information.
     """
     def __init__(self, error_code: int, error_msg: str):
         super().__init__(f'TFTP Error {error_code}')
+        self.error_code = error_code
+        self.error_msg = error_msg
     #:
 #:
 
@@ -267,9 +296,11 @@ class Err(Exception):
 ###################################
 
 def _make_is_valid_hostname():
-    allowed = re.compiler(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
+    allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
     def _is_valid_hostname(hostname):
         """
+        From: http://stackoverflow.com/questions/2532053/validate-a-hostname-string
+        See also https://en.wikipedia.org/wiki/Hostname (and the RFC referenced there)
         """
         if not 0 < len(hostname) <= 255:
             return False
@@ -314,9 +345,6 @@ def get_host_info(server_addr: str) -> tuple[str, str]:
     return server_ip, server_name
 #:
 
-
-
 def is_ascii_printable(txt: str) -> bool:
     return set(txt).issubset(string.printable)
 #:
-

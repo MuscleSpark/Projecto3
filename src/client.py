@@ -36,8 +36,8 @@ def main():
 
     Arguments:
         server                                      Server IP
-        source_file                                 Source file
-        dest_file                                   Optional destination file
+        source_file                                 Source filename
+        dest_file                                   Optional destination filename
 
     Options:
         -h, --help                                  Show this screen.

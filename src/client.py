@@ -62,6 +62,11 @@ def main():
     else:
         exec_tftp_shell(args['<server>'], int(args['--port']))
 
+"""
+Add TRY EXCEPT
+"""
+
+
 def exec_tftp_shell(server: str, server_port: int):
     print(f"Exchanging files with server '{server}' (<ip do servidor>)")
     print(f"Server port is {server_port}\n")

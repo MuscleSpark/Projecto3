@@ -100,6 +100,7 @@ def get_file(server_addr: INET4Address, filename: str):
                         sock.sendto(ack, server_addr)
 
                         if len(data) < MAX_DATA_LEN:
+                            print(f"Download finished.")
                             break
 
                     case TFTPOpcode.ERR:

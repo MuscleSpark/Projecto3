@@ -99,6 +99,8 @@ def clear_screen():
         subprocess.run(['clear'])
     elif os.name == 'nt':
         subprocess.run(['cls'], shell=True)
+    else:
+        pass
 
 # ## Summon respective functions based on arguments
 #     rules = [not args['--contents'],

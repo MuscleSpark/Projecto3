@@ -17,7 +17,8 @@ import subprocess
 import textwrap
 from docopt import docopt
 
-from tftp import get_file 
+from tftp import get_file, put_file
+import socket
 
 
 def main():
@@ -28,7 +29,7 @@ def main():
     Usage:
         client.py (-h | --help)
         client.py [-p SERV_PORT] <server>
-        client.py (get | put) [-p SERV_PORT] <server> <source_file> [dest_file]
+        client.py (get | put) [-p SERV_PORT] <server> <source_file> [<dest_file>]
 
     Required:
         get                                         Downloads file from server
@@ -48,7 +49,9 @@ def main():
 
 ## Setting defaults if no option given
 #    if args['serv_port'] == None: args['serv_port'] = '69'
-    if args['dest_file'] == None: args['dest_file'] = args['source_file']
+    source_file = args['<source_file>']
+    dest_file = args['<dest_file>']
+    if dest_file is None: dest_file = source_file
 
 
 ## Debugging docopt
@@ -56,9 +59,9 @@ def main():
     print()
 
     if args['get']:
-        print("GET")
+        get_file((args['<server>'], int(args['--port'])), source_file, dest_file)
     elif args['put']:
-        print("PUT")
+        put_file((args['<server>'], int(args['--port'])), source_file, dest_file)
     else:
         exec_tftp_shell(args['<server>'], int(args['--port']))
 
@@ -68,29 +71,38 @@ Add TRY EXCEPT
 
 
 def exec_tftp_shell(server: str, server_port: int):
-    print(f"Exchanging files with server '{server}' (<ip do servidor>)")
+    print(f"Exchanging files with server '{server}' ({socket.gethostbyname(server)})")
     print(f"Server port is {server_port}\n")
 
     while True:
         cmd = input("tftpy client> ")
+        cmd = cmd.split()
+        cmd = cmd + None + None
+        print(cmd)
 
-        match cmd:
+        match cmd[0]:
             case 'help':
                 print(textwrap.dedent(
                     """
                     Commands:
+                        get source_file [destination_file] - get a source_file from server and save it as destination_file
+                        put source_file [destination_file] - send a source_file to server and store it as destination_file
+                        dir                                - obtain a listing of remote files
+                        quit | exit | bye                  - exit TFTP client
                     """
                 ))
             case 'get':
-                print("GET (shell)")
+                get_file((server, server_port), cmd[1], cmd[2])
             case 'put':
-                print("PUT (shell)")
-            case 'quit':
+                put_file((server, server_port), cmd[1], cmd[2])
+            case 'dir':
+                get_file((server, server_port), b'', )
+            case 'quit' | 'exit' | 'bye':
                 print("Exiting TFTP client.")
                 print("Goodbye!")
                 sys.exit(0)
             case _:
-                print(f"Unknown command: '{cmd}'")
+                print(f"Unknown command: '{cmd}'. Try 'help'?")
 #:
 
 

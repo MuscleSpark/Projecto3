@@ -10,6 +10,8 @@ Código fonte de acordo com a licença GPL3. Deverá consultar:
 ## tftp.py
 ## Código comum ao cliente e servidor. Deve incluir aqui o código para gerar os pacotes e para gerir o envio de um ficheiro e a recepção de um ficheiro.
 
+import os
+import sys
 import socket
 import string
 import struct
@@ -37,16 +39,31 @@ class TFTPOpcode(IntEnum):
     ACK = 4     # ACKnowledge
     ERR = 5     # ERRor packet
 
+RRQ = 1
+WRQ = 2
+DAT = 3
+ACK = 4
+ERR = 5
+
 ERR_NOT_DEFINED = 0
 ERR_FILE_NOT_FOUND = 1
 ERR_ACCESS_VIOLATION = 2
+DISK_FULL_OR_ALLOC_EXC = 3
+ILLEGAL_TFTP_OP = 4
+UNKOWN_TRANSF_ID = 5
+FILE_ALREADY_EXISTS = 6
+NO_SUCH_USER = 7
 # TODO: Acrescentar códigos de erro em falta
 
 ERROR_MESSAGES = {
     ERR_NOT_DEFINED: 'Not defined, see error message (if any).',
     ERR_FILE_NOT_FOUND: 'File not found.',
     ERR_ACCESS_VIOLATION: 'Access violation.',
-    # TODO: Acrescentar códigos de erro em falta
+    DISK_FULL_OR_ALLOC_EXC: 'Disk full or allocation exceeded.',
+    ILLEGAL_TFTP_OP: 'Illegal TFTP operation',
+    UNKOWN_TRANSF_ID: 'Unkown Transfer ID',
+    FILE_ALREADY_EXISTS: 'File already exists',
+    NO_SUCH_USER: 'No such user'
 }
 
 INET4Address = tuple[str, int]      # TCP/UDP address => IPv4 and port
@@ -66,15 +83,15 @@ INET4Address = tuple[str, int]      # TCP/UDP address => IPv4 and port
 # sock.settimeout(value)
 # sock.close()
 
-def get_file(server_addr: INET4Address, filename: str):
+def get_file(server_addr: INET4Address, source_file: str, dest_file: str):
     """
-    Get the remote file given by 'filename' through a TFTP RRQ connection to remote server at 'server_addr'.
+    Get the remote file given by 'source_file' through a TFTP RRQ connection to remote server at 'server_addr' and save it as 'dest_file'.
     """
-    print(f"Download file {filename} from {server_addr} ")
+    print(f"Download file {source_file} from {server_addr} and saving as {dest_file}")
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(INACTIVITY_TIMEOUT)
-        with open (filename, 'wb') as out_file:
-            rrq = pack_rrq(filename)
+        with open (dest_file, 'wb') as out_file:
+            rrq = pack_rrq(source_file)
             next_block_number = 1
             sock.sendto(rrq, server_addr)
 
@@ -99,12 +116,14 @@ def get_file(server_addr: INET4Address, filename: str):
                         ack = pack_ack(block_number)
                         sock.sendto(ack, server_addr)
 
+                        print(f"\r[{out_file.tell()} bytes]", end='', flush=True)
+
                         if len(data) < MAX_DATA_LEN:
-                            print(f"Download finished.")
+                            print(f"\nDownload finished.")
                             break
 
                     case TFTPOpcode.ERR:
-                        error_code, error_msg = unpack_err(packet)
+                        error_code, error_msg = unpack_err(opcode, packet)
                         raise Err(error_code, error_msg)
                     
                     case _:
@@ -113,9 +132,56 @@ def get_file(server_addr: INET4Address, filename: str):
 
 #:
 
-def put_file(server_addr: INET4Address, filename: str):
-    print(f"Upload file {filename} to {server_addr} ")
+
+def put_file(server_addr: INET4Address, source_file: str, dest_file: str):
+    """
+    Get the remote file given by 'filename' through a TFTP RRQ connection to remote server at 'server_addr'.
+    """
+    print(f"Uploading file {source_file} to {server_addr} ")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(INACTIVITY_TIMEOUT)
+        with open (source_file, 'rb') as in_file:
+            wrq = pack_wrq(dest_file)
+            block_number = 0
+            file_size = os.path.getsize(source_file)
+            sock.sendto(wrq, server_addr)
+
+            while True:
+                ack_pack, server_addr = sock.recvfrom(DEFAULT_BUFFER_SIZE)
+                opcode = unpack_opcode(ack_pack)
+
+                match opcode:
+                    case TFTPOpcode.ACK:
+                        ack_number = unpack_ack(ack_pack)
+                        if ack_number == block_number:
+                            block_number += 1
+                        else:
+                            err_msg = (
+                                f"Unexpected ack number: {ack_number}. Expecting "
+                                f"{block_number}"
+                            )
+                            raise ProtocolError(error_msg)
+
+                        data = in_file.read(MAX_DATA_LEN)
+                        dat_pack = pack_dat(block_number, data)
+                        sock.sendto(dat_pack, server_addr)
+
+                        print(f"\r[{in_file.tell()}/{file_size} bytes]", end='', flush=True)
+
+                        if len(data) < MAX_DATA_LEN:
+                            print(f" Upload finished.")
+                            break
+
+                    case TFTPOpcode.ERR:
+                        error_code, error_msg = unpack_err(opcode, ack_pack)
+                        raise Err(error_code, error_msg)
+                    
+                    case _:
+                        err_msg = f"Invalid packet opcode: {opcode}. Expecting {TFTPOpcode.ACK=}."
+                        raise ProtocolError(err_msg)
+
 #:
+
 
 ###################################
 ##
@@ -128,11 +194,11 @@ def put_file(server_addr: INET4Address, filename: str):
 #####
 
 def pack_rrq(filename: str, mode: str = DEFAULT_MODE):
-    return _pack_rrq_wrq(TFTPOpcode.RRQ, filename, mode)
+    return _pack_rrq_wrq(TFTPOpcode.RRQ.value, filename, mode)
 #:
 
 def pack_wrq(filename: str, mode: str = DEFAULT_MODE):
-    return _pack_rrq_wrq(TFTPOpcode.WRQ, filename, mode)
+    return _pack_rrq_wrq(TFTPOpcode.WRQ.value, filename, mode)
 #:
 
 def _pack_rrq_wrq(opcode: int, filename: str, mode: str = DEFAULT_MODE) -> bytes:
@@ -141,7 +207,7 @@ def _pack_rrq_wrq(opcode: int, filename: str, mode: str = DEFAULT_MODE) -> bytes
     filename_bytes = filename.encode() + b'\x00'
     mode_bytes = mode.encode() + b'\x00'
     fmt = f'!H{len(filename_bytes)}s{len(mode_bytes)}s'
-    return struct.pack(fmt, TFTPOpcode.RRQ, filename_bytes, mode_bytes)
+    return struct.pack(fmt, opcode, filename_bytes, mode_bytes)
 #:
 
 #####
@@ -149,11 +215,11 @@ def _pack_rrq_wrq(opcode: int, filename: str, mode: str = DEFAULT_MODE) -> bytes
 #####
 
 def unpack_rrq(packet: bytes) -> tuple[str, str]:
-    return _unpack_rrq_wrq(TFTPOpcode.RRQ, packet)
+    return _unpack_rrq_wrq(TFTPOpcode.RRQ.value, packet)
 #:
 
 def unpack_wrq(packet: bytes) -> tuple[str, str]:
-    return _unpack_rrq_wrq(TFTPOpcode.WRQ, packet)
+    return _unpack_rrq_wrq(TFTPOpcode.WRQ.value, packet)
 #:
 
 def _unpack_rrq_wrq(opcode: int, packet: bytes) -> tuple[str, str]:
@@ -178,12 +244,12 @@ def pack_dat(block_number: int, data: bytes) -> bytes:
         err_msg = f'Data size {block_number} larger than allowed /{MAX_DATA_LEN}'
         raise TFTPValueError(err_msg)
     fmt = f'!HH{len(data)}s'
-    return struct.pack(fmt, TFTPOpcode.DAT, block_number, data)
+    return struct.pack(fmt, TFTPOpcode.DAT.value, block_number, data)
 #:
 
 def unpack_dat(packet: bytes) -> tuple[int, bytes]:
     opcode, block_number = struct.unpack('!HH', packet[:4])
-    if opcode != TFTPOpcode.DAT:
+    if opcode != TFTPOpcode.DAT.value:
         raise TFTPValueError(f'Invalid opcode {opcode}. Expecting {TFTPOpcode.DAT=}.')
     return block_number, packet[4:]
 #:
@@ -196,12 +262,12 @@ def pack_ack(block_number: int) -> bytes:
     if not 0 <= block_number <= MAX_BLOCK_NUMBER:
         err_msg = f'Invalid block {block_number} larger than allowed /{MAX_BLOCK_NUMBER}'
         raise TFTPValueError(err_msg)
-    return struct.pack(f'!HH', TFTPOpcode.ACK, block_number)
+    return struct.pack(f'!HH', TFTPOpcode.ACK.value, block_number)
 #:
 
 def unpack_ack(packet: bytes) -> int:
     opcode, block_number = struct.unpack('!HH', packet)
-    if opcode != TFTPOpcode.ACK:
+    if opcode != TFTPOpcode.ACK.value:
         err_msg = f'Invalid opcode {opcode}. Expecting {TFTPOpcode.ACK=}.'
         raise TFTPValueError(err_msg)
     return block_number
@@ -218,12 +284,12 @@ def pack_err(error_code: int, error_msg: str | None = None) -> bytes:
         error_msg = ERROR_MESSAGES[error_code]
     error_msg_bytes = error_msg.encode() + b'\x00'
     fmt = f'!HH{len(error_msg_bytes)}s'
-    return struct.pack(fmt, TFTPOpcode.ERR, error_code, error_msg_bytes)
+    return struct.pack(fmt, TFTPOpcode.ERR.value, error_code, error_msg_bytes)
 #:
 
 def unpack_err(opcode: int, packet: bytes) -> tuple[str, str]:
     opcode, error_code = struct.unpack('!HH', packet[:4])
-    if opcode != TFTPOpcode.ERR:
+    if opcode != TFTPOpcode.ERR.value:
         raise TFTPValueError(f'Invalid opcode: {opcode}. Expected opcode: {TFTPOpcode.ERR=}')
     return error_code, packet[4:-1].decode()
 #:
@@ -234,7 +300,7 @@ def unpack_err(opcode: int, packet: bytes) -> tuple[str, str]:
 
 def unpack_opcode(packet: bytes) -> int:
     opcode, *_ = struct.unpack('!H', packet[:2])
-    if opcode not in (TFTPOpcode.RRQ, TFTPOpcode.WRQ, TFTPOpcode.DAT, TFTPOpcode.ACK, TFTPOpcode.ERR):
+    if opcode not in (TFTPOpcode.RRQ.value, TFTPOpcode.WRQ.value, TFTPOpcode.DAT.value, TFTPOpcode.ACK.value, TFTPOpcode.ERR.value):
         raise TFTPValueError(f"Invalid opcode {opcode}")
     return opcode
 #:

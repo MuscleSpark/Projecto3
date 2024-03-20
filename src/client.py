@@ -55,15 +55,17 @@ def main():
 
 
 ## Debugging docopt
-    print(args)
+#    print(args)
     print()
-
-    if args['get']:
-        get_file((args['<server>'], int(args['--port'])), source_file, dest_file)
-    elif args['put']:
-        put_file((args['<server>'], int(args['--port'])), source_file, dest_file)
-    else:
-        exec_tftp_shell(args['<server>'], int(args['--port']))
+    try:
+        if args['get']:
+            get_file((args['<server>'], int(args['--port'])), source_file, dest_file)
+        elif args['put']:
+            put_file((args['<server>'], int(args['--port'])), source_file, dest_file)
+        else:
+            exec_tftp_shell(args['<server>'], int(args['--port']))
+    except Exception as Err:
+        print(f"Error: {Err}")
 
 """
 Add TRY EXCEPT
@@ -71,38 +73,49 @@ Add TRY EXCEPT
 
 
 def exec_tftp_shell(server: str, server_port: int):
+    clear_screen()
     print(f"Exchanging files with server '{server}' ({socket.gethostbyname(server)})")
     print(f"Server port is {server_port}\n")
 
     while True:
-        cmd = input("tftpy client> ")
-        cmd = cmd.split()
-        cmd = cmd + None + None
-        print(cmd)
+        try:
+            cmd = input("tftpy client> ")
+            cmd, *args  = cmd.split()
+            if len(args) > 0:
+                source_file = args[0]
+                destination_file = args[1] if len(args) > 1 else source_file
 
-        match cmd[0]:
-            case 'help':
-                print(textwrap.dedent(
-                    """
-                    Commands:
-                        get source_file [destination_file] - get a source_file from server and save it as destination_file
-                        put source_file [destination_file] - send a source_file to server and store it as destination_file
-                        dir                                - obtain a listing of remote files
-                        quit | exit | bye                  - exit TFTP client
-                    """
-                ))
-            case 'get':
-                get_file((server, server_port), cmd[1], cmd[2])
-            case 'put':
-                put_file((server, server_port), cmd[1], cmd[2])
-            case 'dir':
-                get_file((server, server_port), b'', )
-            case 'quit' | 'exit' | 'bye':
-                print("Exiting TFTP client.")
-                print("Goodbye!")
-                sys.exit(0)
-            case _:
-                print(f"Unknown command: '{cmd}'. Try 'help'?")
+            match cmd:
+                case 'help':
+                    print(textwrap.dedent(
+                        """
+                        Commands:
+                            get source_file [destination_file] - get a source_file from server and save it as destination_file
+                            put source_file [destination_file] - send a source_file to server and store it as destination_file
+                            dir                                - obtain a listing of remote files
+                            quit | exit | bye                  - exit TFTP client
+                        """
+                    ))
+                case 'get':
+                    if len(args) == 0:
+                        print("Usage: get source_file [destination_file] - get a source_file from server and save it as destination_file")
+                    else:
+                        get_file((server, server_port), source_file, destination_file)
+                case 'put':
+                    if len(args) == 0:
+                        print("Usage: put source_file [destination_file] - send a source_file to server and store it as destination_file")
+                    else:
+                        put_file((server, server_port), source_file, destination_file)
+    #            case 'dir':
+    #                get_file((server, server_port), b'', )
+                case 'quit' | 'exit' | 'bye':
+                    print("Exiting TFTP client.")
+                    print("Goodbye!")
+                    sys.exit(0)
+                case _:
+                    print(f"Unknown command: '{cmd}'. Try 'help'?")
+        except Exception as e:
+            print(f"Error: {e}")
 #:
 
 
@@ -113,25 +126,6 @@ def clear_screen():
         subprocess.run(['cls'], shell=True)
     else:
         pass
-
-# ## Summon respective functions based on arguments
-#     rules = [not args['--contents'],
-#          not args['--name'],
-#          not args['--extension'],
-#          not args['--regex']]
-    
-#     if all(rules):
-#         print("No options will use --name")
-#         name(args['<dir>'])
-#     else:
-#         if args['--contents'] == True: contents(args['<dir>'])
-#         if args['--name'] == True: name(args['<dir>'])
-#         if args['--extension'] == True: extension(args['<dir>'])
-#         if args['--regex'] != None: regex(args['<dir>'], args['--regex'])
-
-#     print("\nTask complete.")
-#:
-
 
 
 if __name__ == "__main__":

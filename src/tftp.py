@@ -11,7 +11,7 @@ Código fonte de acordo com a licença GPL3. Deverá consultar:
 ## Código comum ao cliente e servidor. Deve incluir aqui o código para gerar os pacotes e para gerir o envio de um ficheiro e a recepção de um ficheiro.
 
 import os
-import sys
+#import sys
 import socket
 import string
 import struct
